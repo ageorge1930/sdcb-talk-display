@@ -83,12 +83,80 @@
   }
   button:active { opacity: 0.6; }
   #listenBtn.listening { background: #D64545; border-color: #D64545; color: #fff; }
+  #aslBtn.active { background: #2E7D32; border-color: #2E7D32; color: #fff; }
   .theme-light { background: #FFFFFF; color: #000000; }
   .theme-light #textInput { background: #F5F5F5; color: #000; border-color: #1A1A1A; }
   .theme-light #controls { border-top-color: #DDD; }
   .theme-light button { border-color: #1A1A1A; }
   .theme-highvis { background: #000000; color: #FFE600; }
   .theme-highvis button, .theme-highvis #textInput { border-color: #FFE600; }
+
+  /* ASL fingerspelling panel — hidden and inert by default so it adds
+     zero runtime cost until the user opens it. */
+  #aslPanel {
+    display: none;
+    border-top: 1px solid #333;
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  }
+  #aslPanel.active { display: block; }
+  .theme-light #aslPanel { border-top-color: #DDD; }
+  .theme-highvis #aslPanel { border-top-color: #FFE600; }
+  #aslNote {
+    font-size: 12px;
+    opacity: 0.6;
+    text-align: center;
+    margin-bottom: 6px;
+  }
+  .asl-strip {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding: 4px 2px 8px;
+    justify-content: flex-start;
+    scroll-behavior: smooth;
+  }
+  .asl-strip:has(.asl-letter:nth-child(-n+8):last-child) { justify-content: center; }
+  .asl-letter {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    opacity: 0.35;
+    transition: opacity 0.15s ease, transform 0.15s ease;
+  }
+  .asl-letter.current { opacity: 1; transform: scale(1.08); }
+  .asl-letter img {
+    width: 52px;
+    height: 52px;
+    background: #fff;
+    border-radius: 10px;
+    padding: 5px;
+    display: block;
+  }
+  .asl-letter .asl-space {
+    width: 52px;
+    height: 52px;
+  }
+  .asl-letter span {
+    font-size: 12px;
+    font-weight: 700;
+    margin-top: 3px;
+  }
+  .asl-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+    justify-content: center;
+  }
+  .asl-controls button { padding: 10px 14px; font-size: 14px; }
+  .asl-controls label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    font-weight: 500;
+  }
 </style>
 </head>
 <body class="theme-dark">
@@ -99,11 +167,25 @@
   <textarea id="textInput" placeholder="Type here..."></textarea>
 </div>
 
+<div id="aslPanel">
+  <div id="aslNote">ASL fingerspelling &mdash; letters only (A&ndash;Z). Hand shapes: public domain, wpclipart.com via Wikimedia Commons.</div>
+  <div id="aslStrip" class="asl-strip"></div>
+  <div class="asl-controls">
+    <button id="aslPrevBtn" aria-label="Previous letter">⏮</button>
+    <button id="aslPlayBtn" aria-label="Play fingerspelling">▶ Play</button>
+    <button id="aslNextBtn" aria-label="Next letter">⏭</button>
+    <label>Speed
+      <input id="aslSpeed" type="range" min="300" max="1600" step="100" value="700" aria-label="Fingerspelling speed">
+    </label>
+  </div>
+</div>
+
 <div id="controls">
   <button id="listenBtn" aria-label="Start listening">🎤 Listen</button>
   <button id="decreaseBtn" aria-label="Decrease text size">−</button>
   <button id="increaseBtn" aria-label="Increase text size">+</button>
   <button id="themeBtn" aria-label="Change contrast theme">Contrast</button>
+  <button id="aslBtn" aria-label="Toggle ASL fingerspelling">🤟 ASL</button>
   <button id="clearBtn" aria-label="Clear text">Clear</button>
 </div>
 
@@ -127,6 +209,8 @@
     } else {
       display.innerHTML = '<p class="placeholder">Type below, or use your phone keyboard\'s dictation button, and it appears here.</p>';
     }
+    // Keep the ASL strip in sync, but only do the work if the panel is open.
+    if (typeof updateAslStrip === 'function') updateAslStrip();
   }
 
   function escapeHtml(str) {
@@ -243,6 +327,145 @@
     listenBtn.disabled = true;
     listenBtn.style.opacity = '0.4';
   }
+
+  // ---------------------------------------------------------------------
+  // ASL fingerspelling panel.
+  // Everything in this block is additive and gated behind aslActive, so
+  // when the panel is closed (the default) it costs nothing: no timers,
+  // no DOM writes, no image loads beyond what's already on screen.
+  // ---------------------------------------------------------------------
+  const aslBtn = document.getElementById('aslBtn');
+  const aslPanel = document.getElementById('aslPanel');
+  const aslStrip = document.getElementById('aslStrip');
+  const aslPrevBtn = document.getElementById('aslPrevBtn');
+  const aslPlayBtn = document.getElementById('aslPlayBtn');
+  const aslNextBtn = document.getElementById('aslNextBtn');
+  const aslSpeed = document.getElementById('aslSpeed');
+
+  let aslActive = false;
+  let aslLetters = [];   // e.g. ['H','E','L','L','O',' ','W','O','R','L','D']
+  let aslIndex = -1;
+  let aslTimer = null;
+
+  function textToAslLetters(text) {
+    // Only A-Z have hand-shape art; everything else collapses to a space
+    // (word gap) so numbers/punctuation don't break the sequence.
+    const out = [];
+    const upper = text.toUpperCase();
+    for (const ch of upper) {
+      if (ch >= 'A' && ch <= 'Z') out.push(ch);
+      else if (out.length && out[out.length - 1] !== ' ') out.push(' ');
+    }
+    while (out.length && out[0] === ' ') out.shift();
+    while (out.length && out[out.length - 1] === ' ') out.pop();
+    return out;
+  }
+
+  function buildAslStrip() {
+    aslLetters = textToAslLetters(textInput.value);
+    aslStrip.innerHTML = '';
+    aslLetters.forEach((ch, i) => {
+      const cell = document.createElement('div');
+      cell.className = 'asl-letter';
+      cell.dataset.index = i;
+      if (ch === ' ') {
+        const gap = document.createElement('div');
+        gap.className = 'asl-space';
+        cell.appendChild(gap);
+      } else {
+        const img = document.createElement('img');
+        img.src = 'asl-' + ch + '.svg';
+        img.alt = 'ASL letter ' + ch;
+        img.width = 52;
+        img.height = 52;
+        cell.appendChild(img);
+      }
+      const label = document.createElement('span');
+      label.textContent = ch === ' ' ? '' : ch;
+      cell.appendChild(label);
+      aslStrip.appendChild(cell);
+    });
+    if (aslIndex >= aslLetters.length) aslIndex = aslLetters.length - 1;
+    highlightAslIndex();
+  }
+
+  function highlightAslIndex() {
+    const cells = aslStrip.querySelectorAll('.asl-letter');
+    cells.forEach((cell, i) => {
+      cell.classList.toggle('current', i === aslIndex);
+    });
+    if (aslIndex >= 0 && cells[aslIndex]) {
+      cells[aslIndex].scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+    }
+  }
+
+  function updateAslStrip() {
+    if (!aslActive) return; // no-op while panel is closed
+    stopAslPlayback();
+    aslIndex = aslLetters.length ? 0 : -1;
+    buildAslStrip();
+  }
+
+  function stopAslPlayback() {
+    if (aslTimer) {
+      clearInterval(aslTimer);
+      aslTimer = null;
+    }
+    aslPlayBtn.textContent = '▶ Play';
+  }
+
+  function stepAsl(delta) {
+    if (!aslLetters.length) return;
+    aslIndex = Math.max(0, Math.min(aslLetters.length - 1, aslIndex + delta));
+    highlightAslIndex();
+  }
+
+  aslBtn.addEventListener('click', () => {
+    aslActive = !aslActive;
+    aslBtn.classList.toggle('active', aslActive);
+    aslPanel.classList.toggle('active', aslActive);
+    if (aslActive) {
+      aslIndex = 0;
+      buildAslStrip();
+    } else {
+      stopAslPlayback();
+    }
+  });
+
+  aslPrevBtn.addEventListener('click', () => { stopAslPlayback(); stepAsl(-1); });
+  aslNextBtn.addEventListener('click', () => { stopAslPlayback(); stepAsl(1); });
+
+  aslPlayBtn.addEventListener('click', () => {
+    if (aslTimer) {
+      stopAslPlayback();
+      return;
+    }
+    if (!aslLetters.length) return;
+    if (aslIndex >= aslLetters.length - 1) aslIndex = -1;
+    aslPlayBtn.textContent = '⏸ Pause';
+    aslTimer = setInterval(() => {
+      aslIndex++;
+      if (aslIndex >= aslLetters.length) {
+        stopAslPlayback();
+        return;
+      }
+      highlightAslIndex();
+    }, parseInt(aslSpeed.value, 10));
+  });
+
+  aslSpeed.addEventListener('input', () => {
+    if (aslTimer) {
+      clearInterval(aslTimer);
+      aslTimer = setInterval(() => {
+        aslIndex++;
+        if (aslIndex >= aslLetters.length) {
+          stopAslPlayback();
+          return;
+        }
+        highlightAslIndex();
+      }, parseInt(aslSpeed.value, 10));
+    }
+  });
 
   // Register service worker for offline use
   if ('serviceWorker' in navigator) {
