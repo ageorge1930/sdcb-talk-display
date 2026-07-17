@@ -1,4 +1,4 @@
-const CACHE_NAME = 'talk-display-v2';
+const CACHE_NAME = 'talk-display-v3';
 const FILES_TO_CACHE = [
   './index.html', './manifest.json', './icon-192.png', './icon-512.png',
   './asl-A.svg',

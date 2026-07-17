@@ -107,6 +107,48 @@
     text-align: center;
     margin-bottom: 6px;
   }
+  #aslStage {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    padding: 4px 0 10px;
+    min-height: 168px;
+  }
+  .asl-stage-inner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .asl-stage-inner img {
+    width: 148px;
+    height: 148px;
+    background: #fff;
+    border-radius: 20px;
+    padding: 12px;
+    display: block;
+  }
+  .asl-stage-inner .asl-stage-gap {
+    width: 148px;
+    height: 148px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 40px;
+    opacity: 0.3;
+  }
+  .asl-stage-inner span {
+    font-size: 32px;
+    font-weight: 800;
+    margin-top: 8px;
+    letter-spacing: 0.5px;
+  }
+  @keyframes aslPop {
+    0%   { transform: scale(0.55); opacity: 0; }
+    55%  { transform: scale(1.12); opacity: 1; }
+    100% { transform: scale(1); opacity: 1; }
+  }
+  .asl-stage-inner.pop { animation: aslPop 0.18s ease-out; }
+
   .asl-strip {
     display: flex;
     gap: 8px;
@@ -169,13 +211,14 @@
 
 <div id="aslPanel">
   <div id="aslNote">ASL fingerspelling &mdash; letters only (A&ndash;Z). Hand shapes: public domain, wpclipart.com via Wikimedia Commons.</div>
+  <div id="aslStage"><div id="aslStageInner" class="asl-stage-inner"></div></div>
   <div id="aslStrip" class="asl-strip"></div>
   <div class="asl-controls">
     <button id="aslPrevBtn" aria-label="Previous letter">⏮</button>
     <button id="aslPlayBtn" aria-label="Play fingerspelling">▶ Play</button>
     <button id="aslNextBtn" aria-label="Next letter">⏭</button>
     <label>Speed
-      <input id="aslSpeed" type="range" min="300" max="1600" step="100" value="700" aria-label="Fingerspelling speed">
+      <input id="aslSpeed" type="range" min="120" max="900" step="20" value="260" aria-label="Fingerspelling speed">
     </label>
   </div>
 </div>
@@ -337,6 +380,7 @@
   const aslBtn = document.getElementById('aslBtn');
   const aslPanel = document.getElementById('aslPanel');
   const aslStrip = document.getElementById('aslStrip');
+  const aslStageInner = document.getElementById('aslStageInner');
   const aslPrevBtn = document.getElementById('aslPrevBtn');
   const aslPlayBtn = document.getElementById('aslPlayBtn');
   const aslNextBtn = document.getElementById('aslNextBtn');
@@ -389,6 +433,30 @@
     highlightAslIndex();
   }
 
+  function updateAslStage(ch) {
+    // Pop the current hand-shape in big, so playback reads like watching
+    // someone actually sign rather than scanning a static strip.
+    aslStageInner.classList.remove('pop');
+    void aslStageInner.offsetWidth; // force reflow so the animation restarts every letter
+    aslStageInner.innerHTML = '';
+    if (ch === undefined || ch === null) return;
+    if (ch === ' ') {
+      const gap = document.createElement('div');
+      gap.className = 'asl-stage-gap';
+      gap.textContent = '\u00B7';
+      aslStageInner.appendChild(gap);
+    } else {
+      const img = document.createElement('img');
+      img.src = 'asl-' + ch + '.svg';
+      img.alt = 'ASL letter ' + ch;
+      aslStageInner.appendChild(img);
+    }
+    const label = document.createElement('span');
+    label.textContent = ch === ' ' ? '' : ch;
+    aslStageInner.appendChild(label);
+    aslStageInner.classList.add('pop');
+  }
+
   function highlightAslIndex() {
     const cells = aslStrip.querySelectorAll('.asl-letter');
     cells.forEach((cell, i) => {
@@ -397,6 +465,7 @@
     if (aslIndex >= 0 && cells[aslIndex]) {
       cells[aslIndex].scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
     }
+    updateAslStage(aslIndex >= 0 ? aslLetters[aslIndex] : null);
   }
 
   function updateAslStrip() {
