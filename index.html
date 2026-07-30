@@ -179,17 +179,32 @@
     }
   }
 
-  // iOS Safari is known to silently stop returning results when
-  // continuous:true is used, so it needs the stop/restart-on-pause approach.
-  // Everywhere else, continuous:true avoids that restart cycle entirely,
-  // which is what was causing the "stops listening after a few seconds of
-  // silence" delay/dropout.
+  // iOS Safari's built-in webkitSpeechRecognition is fundamentally unreliable
+  // for continuous use — no amount of restart/retry logic fixes it. Apple's
+  // own on-device dictation (the mic button built into the iOS keyboard) is
+  // far more robust, so on iOS the button just brings up the keyboard and
+  // the user taps the keyboard's own mic icon to dictate. Everywhere else
+  // (Android, desktop) the in-app Listen button keeps using the Web Speech
+  // API, which works fine there.
   const isIOS = /iP(hone|od|ad)/.test(navigator.userAgent) ||
     (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
-  if (SR) {
+  if (isIOS) {
+    listenBtn.textContent = '⌨️ Dictate';
+    listenBtn.setAttribute('aria-label', 'Open keyboard to dictate');
+    listenBtn.addEventListener('click', () => {
+      if (synth && synth.speaking) {
+        synth.cancel();
+      }
+      textInput.focus();
+      const len = textInput.value.length;
+      textInput.setSelectionRange(len, len);
+    });
+  } else if (SR) {
+    // This whole branch only runs on non-iOS, so continuous listening
+    // (which iOS can't handle reliably) is always safe to use here.
     recognition = new SR();
-    recognition.continuous = !isIOS;
+    recognition.continuous = true;
     recognition.interimResults = true;
     recognition.lang = 'en-US';
 
@@ -220,19 +235,6 @@
     };
 
     recognition.onend = () => {
-      if (isIOS) {
-        // iOS Safari's speech engine is unreliable about auto-restarting —
-        // developers who've dealt with it (and Apple's own bug reports)
-        // consistently find that trying to silently resume causes it to
-        // "clog" or stop capturing audio without any error firing, which is
-        // exactly the dropout this was causing. So on iOS, one tap of
-        // Listen = one sentence: when the phone's own silence detection
-        // ends the session, stop cleanly and hand control back to the
-        // button instead of guessing whether a restart will actually work.
-        listening = false;
-        setListeningUI(false);
-        return;
-      }
       if (!listening) {
         setListeningUI(false);
         return;
@@ -244,7 +246,6 @@
     // noticeable gap where it seemed like the app stopped listening).
     // Only back off if the browser is genuinely still tearing down the
     // previous session (InvalidStateError), and give up after a few tries.
-    // (Not used on iOS — see onend above.)
     function restartRecognition(attempt) {
       attempt = attempt || 0;
       if (!listening) return;
@@ -273,9 +274,9 @@
       try {
         recognition.start();
       } catch (e) {
-        // Right after a session ends, iOS in particular can still be
-        // releasing the mic — retry a few times on a short delay instead
-        // of silently giving up (which is what made the button feel dead).
+        // Right after a session ends the browser can still be releasing
+        // the mic — retry a few times on a short delay instead of
+        // silently giving up (which is what made the button feel dead).
         if (attempt < 6) {
           setTimeout(() => attemptStart(attempt + 1), 150);
         }
