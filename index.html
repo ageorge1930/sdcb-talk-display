@@ -260,6 +260,28 @@
       }
     }
 
+    // Confirm the mic is actually capturing before flipping the UI —
+    // otherwise a failed start() (e.g. iOS still tearing down the previous
+    // session) leaves the button saying "Listen" while doing nothing.
+    recognition.onstart = () => {
+      listening = true;
+      setListeningUI(true);
+    };
+
+    function attemptStart(attempt) {
+      attempt = attempt || 0;
+      try {
+        recognition.start();
+      } catch (e) {
+        // Right after a session ends, iOS in particular can still be
+        // releasing the mic — retry a few times on a short delay instead
+        // of silently giving up (which is what made the button feel dead).
+        if (attempt < 6) {
+          setTimeout(() => attemptStart(attempt + 1), 150);
+        }
+      }
+    }
+
     listenBtn.addEventListener('click', () => {
       // Don't let the mic pick up the app's own spoken output
       if (synth && synth.speaking) {
@@ -272,11 +294,7 @@
       } else {
         // Continue from whatever's already typed/dictated instead of wiping it.
         finalTranscript = textInput.value ? textInput.value + ' ' : '';
-        try {
-          recognition.start();
-          listening = true;
-          setListeningUI(true);
-        } catch (e) {}
+        attemptStart();
       }
     });
   } else {
