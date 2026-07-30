@@ -179,11 +179,17 @@
     }
   }
 
+  // iOS Safari is known to silently stop returning results when
+  // continuous:true is used, so it needs the stop/restart-on-pause approach.
+  // Everywhere else, continuous:true avoids that restart cycle entirely,
+  // which is what was causing the "stops listening after a few seconds of
+  // silence" delay/dropout.
+  const isIOS = /iP(hone|od|ad)/.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
   if (SR) {
-    // continuous:false + auto-restart on end is far more reliable on iOS Safari,
-    // where continuous:true is known to silently stop returning results.
     recognition = new SR();
-    recognition.continuous = false;
+    recognition.continuous = !isIOS;
     recognition.interimResults = true;
     recognition.lang = 'en-US';
 
@@ -218,21 +224,27 @@
         setListeningUI(false);
         return;
       }
-      // A short delay before restarting avoids "recognition already started"
-      // races that can otherwise leave the mic silently not listening.
-      setTimeout(() => {
-        if (!listening) return;
-        try {
-          recognition.start();
-        } catch (e) {
-          // Already running is fine — anything else means restart truly failed.
-          if (e.name !== 'InvalidStateError') {
-            listening = false;
-            setListeningUI(false);
-          }
-        }
-      }, 200);
+      restartRecognition();
     };
+
+    // Restart immediately (no artificial delay — that's what caused the
+    // noticeable gap where it seemed like the app stopped listening).
+    // Only back off if the browser is genuinely still tearing down the
+    // previous session (InvalidStateError), and give up after a few tries.
+    function restartRecognition(attempt) {
+      attempt = attempt || 0;
+      if (!listening) return;
+      try {
+        recognition.start();
+      } catch (e) {
+        if (e.name === 'InvalidStateError' && attempt < 5) {
+          setTimeout(() => restartRecognition(attempt + 1), 100);
+        } else {
+          listening = false;
+          setListeningUI(false);
+        }
+      }
+    }
 
     listenBtn.addEventListener('click', () => {
       // Don't let the mic pick up the app's own spoken output
