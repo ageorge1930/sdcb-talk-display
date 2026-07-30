@@ -220,6 +220,19 @@
     };
 
     recognition.onend = () => {
+      if (isIOS) {
+        // iOS Safari's speech engine is unreliable about auto-restarting —
+        // developers who've dealt with it (and Apple's own bug reports)
+        // consistently find that trying to silently resume causes it to
+        // "clog" or stop capturing audio without any error firing, which is
+        // exactly the dropout this was causing. So on iOS, one tap of
+        // Listen = one sentence: when the phone's own silence detection
+        // ends the session, stop cleanly and hand control back to the
+        // button instead of guessing whether a restart will actually work.
+        listening = false;
+        setListeningUI(false);
+        return;
+      }
       if (!listening) {
         setListeningUI(false);
         return;
@@ -231,6 +244,7 @@
     // noticeable gap where it seemed like the app stopped listening).
     // Only back off if the browser is genuinely still tearing down the
     // previous session (InvalidStateError), and give up after a few tries.
+    // (Not used on iOS — see onend above.)
     function restartRecognition(attempt) {
       attempt = attempt || 0;
       if (!listening) return;
