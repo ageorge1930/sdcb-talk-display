@@ -189,22 +189,11 @@
   const isIOS = /iP(hone|od|ad)/.test(navigator.userAgent) ||
     (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
-  if (isIOS) {
-    listenBtn.textContent = '⌨️ Dictate';
-    listenBtn.setAttribute('aria-label', 'Open keyboard to dictate');
-    listenBtn.addEventListener('click', () => {
-      if (synth && synth.speaking) {
-        synth.cancel();
-      }
-      textInput.focus();
-      const len = textInput.value.length;
-      textInput.setSelectionRange(len, len);
-    });
-  } else if (SR) {
-    // This whole branch only runs on non-iOS, so continuous listening
-    // (which iOS can't handle reliably) is always safe to use here.
+  if (SR) {
+    // Same setup as the original version that worked on iPhone:
+    // continuous:false + auto-restart on end. (Non-iOS can use continuous.)
     recognition = new SR();
-    recognition.continuous = true;
+    recognition.continuous = !isIOS;
     recognition.interimResults = true;
     recognition.lang = 'en-US';
 
@@ -235,57 +224,22 @@
     };
 
     recognition.onend = () => {
-      if (!listening) {
-        setListeningUI(false);
-        return;
-      }
-      restartRecognition();
-    };
-
-    // Restart immediately (no artificial delay — that's what caused the
-    // noticeable gap where it seemed like the app stopped listening).
-    // Only back off if the browser is genuinely still tearing down the
-    // previous session (InvalidStateError), and give up after a few tries.
-    function restartRecognition(attempt) {
-      attempt = attempt || 0;
-      if (!listening) return;
-      try {
-        recognition.start();
-      } catch (e) {
-        if (e.name === 'InvalidStateError' && attempt < 5) {
-          setTimeout(() => restartRecognition(attempt + 1), 100);
-        } else {
+      if (listening) {
+        try {
+          recognition.start();
+        } catch (e) {
+          // Restart failed (rare) — reset UI so user can just tap Listen again
           listening = false;
           setListeningUI(false);
         }
+      } else {
+        setListeningUI(false);
       }
-    }
-
-    // Confirm the mic is actually capturing before flipping the UI —
-    // otherwise a failed start() (e.g. iOS still tearing down the previous
-    // session) leaves the button saying "Listen" while doing nothing.
-    recognition.onstart = () => {
-      listening = true;
-      setListeningUI(true);
     };
 
-    function attemptStart(attempt) {
-      attempt = attempt || 0;
-      try {
-        recognition.start();
-      } catch (e) {
-        // Right after a session ends the browser can still be releasing
-        // the mic — retry a few times on a short delay instead of
-        // silently giving up (which is what made the button feel dead).
-        if (attempt < 6) {
-          setTimeout(() => attemptStart(attempt + 1), 150);
-        }
-      }
-    }
-
     listenBtn.addEventListener('click', () => {
-      // Don't let the mic pick up the app's own spoken output
-      if (synth && synth.speaking) {
+      // Stop any spoken output so the mic doesn't hear it
+      if (typeof synth !== 'undefined' && synth && synth.speaking) {
         synth.cancel();
       }
       if (listening) {
@@ -293,9 +247,13 @@
         recognition.stop();
         setListeningUI(false);
       } else {
-        // Continue from whatever's already typed/dictated instead of wiping it.
+        // Keep text across pauses/restarts instead of overwriting it.
         finalTranscript = textInput.value ? textInput.value + ' ' : '';
-        attemptStart();
+        try {
+          recognition.start();
+          listening = true;
+          setListeningUI(true);
+        } catch (e) {}
       }
     });
   } else {
