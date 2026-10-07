@@ -192,50 +192,66 @@
   if (SR) {
     // Same setup as the original version that worked on iPhone:
     // continuous:false + auto-restart on end. (Non-iOS can use continuous.)
-    recognition = new SR();
-    recognition.continuous = !isIOS;
-    recognition.interimResults = true;
-    recognition.lang = 'en-US';
+    // A brand-new recognizer is built for every (re)start. On iPhone the old
+    // one often can't be restarted after a pause and just goes dead, which
+    // is why it stopped listening after you paused.
+    function buildRecognition() {
+      const r = new SR();
+      r.continuous = !isIOS;
+      r.interimResults = true;
+      r.lang = 'en-US';
 
-    recognition.onresult = (event) => {
-      let interim = '';
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        const transcript = event.results[i][0].transcript;
-        if (event.results[i].isFinal) {
-          finalTranscript += transcript + ' ';
-        } else {
-          interim += transcript;
+      r.onresult = (event) => {
+        let interim = '';
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const transcript = event.results[i][0].transcript;
+          if (event.results[i].isFinal) {
+            finalTranscript += transcript + ' ';
+          } else {
+            interim += transcript;
+          }
         }
-      }
-      textInput.value = (finalTranscript + interim).trim();
-      render();
-    };
+        textInput.value = (finalTranscript + interim).trim();
+        render();
+      };
 
-    recognition.onerror = (event) => {
-      // "no-speech" just means a pause — keep listening, don't treat as a real error
-      if (event.error === 'no-speech') return;
-      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
-        listening = false;
-        setListeningUI(false);
-        display.innerHTML = '<p class="placeholder">Microphone access was blocked. Check Settings → Safari → Microphone for this site, then tap Listen again.</p>';
-        return;
-      }
-      // Other errors (audio-capture, network, aborted): try to recover silently via onend restart
-    };
-
-    recognition.onend = () => {
-      if (listening) {
-        try {
-          recognition.start();
-        } catch (e) {
-          // Restart failed (rare) — reset UI so user can just tap Listen again
+      r.onerror = (event) => {
+        // "no-speech" just means a pause — keep listening
+        if (event.error === 'no-speech') return;
+        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
           listening = false;
           setListeningUI(false);
+          display.innerHTML = '<p class="placeholder">Microphone access was blocked. Check Settings → Safari → Microphone for this site, then tap Listen again.</p>';
         }
-      } else {
-        setListeningUI(false);
-      }
-    };
+      };
+
+      r.onend = () => {
+        if (r !== recognition) return; // an old recognizer finishing
+        if (listening) {
+          restartSoon(0);
+        } else {
+          setListeningUI(false);
+        }
+      };
+      return r;
+    }
+
+    function restartSoon(attempt) {
+      setTimeout(() => {
+        if (!listening) return;
+        try {
+          recognition = buildRecognition();
+          recognition.start();
+        } catch (e) {
+          if (attempt < 8) {
+            restartSoon(attempt + 1);
+          } else {
+            listening = false;
+            setListeningUI(false);
+          }
+        }
+      }, attempt === 0 ? 150 : 400);
+    }
 
     listenBtn.addEventListener('click', () => {
       // Stop any spoken output so the mic doesn't hear it
@@ -244,12 +260,13 @@
       }
       if (listening) {
         listening = false;
-        recognition.stop();
+        try { recognition.stop(); } catch (e) {}
         setListeningUI(false);
       } else {
         // Keep text across pauses/restarts instead of overwriting it.
         finalTranscript = textInput.value ? textInput.value + ' ' : '';
         try {
+          recognition = buildRecognition();
           recognition.start();
           listening = true;
           setListeningUI(true);
