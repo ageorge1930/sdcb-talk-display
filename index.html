@@ -108,10 +108,18 @@
   <button id="themeBtn" aria-label="Change contrast theme">Contrast</button>
   <button id="clearBtn" aria-label="Clear text">Clear</button>
 </div>
+<div id="status" style="font-size:12px;opacity:0.6;text-align:center;padding:0 12px 8px;white-space:pre-line"></div>
 
 <script>
   const display = document.getElementById('display');
   const textInput = document.getElementById('textInput');
+  const statusEl = document.getElementById('status');
+  const statusLog = [];
+  function logStatus(msg) {
+    statusLog.push(new Date().toTimeString().slice(3, 8) + ' ' + msg);
+    while (statusLog.length > 4) statusLog.shift();
+    statusEl.textContent = statusLog.join('\n');
+  }
   const decreaseBtn = document.getElementById('decreaseBtn');
   const increaseBtn = document.getElementById('increaseBtn');
   const themeBtn = document.getElementById('themeBtn');
@@ -201,7 +209,11 @@
       r.interimResults = true;
       r.lang = 'en-US';
 
+      r.onstart = () => logStatus('started');
+      r.onaudiostart = () => logStatus('mic audio on');
+      r.onaudioend = () => logStatus('mic audio off');
       r.onresult = (event) => {
+        logStatus('result (' + event.results.length + ')');
         let interim = '';
         for (let i = event.resultIndex; i < event.results.length; i++) {
           const transcript = event.results[i][0].transcript;
@@ -216,6 +228,7 @@
       };
 
       r.onerror = (event) => {
+        logStatus('error: ' + event.error);
         // "no-speech" just means a pause — keep listening
         if (event.error === 'no-speech') return;
         if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
@@ -226,6 +239,7 @@
       };
 
       r.onend = () => {
+        logStatus('ended' + (listening ? ', restarting' : ''));
         if (r !== recognition) return; // an old recognizer finishing
         if (listening) {
           restartSoon(0);
@@ -242,7 +256,9 @@
         try {
           recognition = buildRecognition();
           recognition.start();
+          logStatus('restart ' + (attempt + 1) + ' called');
         } catch (e) {
+          logStatus('restart failed: ' + e.name);
           if (attempt < 8) {
             restartSoon(attempt + 1);
           } else {
@@ -270,7 +286,10 @@
           recognition.start();
           listening = true;
           setListeningUI(true);
-        } catch (e) {}
+          logStatus('Listen tapped');
+        } catch (e) {
+          logStatus('start failed: ' + e.name);
+        }
       }
     });
   } else {
